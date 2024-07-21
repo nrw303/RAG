@@ -1,5 +1,5 @@
-
-from flask import Flask, request
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from pydantic import BaseModel
 from langchain_community.llms import Ollama
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -11,9 +11,9 @@ from langchain.prompts import PromptTemplate
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
+import uvicorn
 
-
-app = Flask(__name__)
+app = FastAPI()
 
 chat_history = []
 
@@ -29,7 +29,7 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 raw_prompt = PromptTemplate.from_template(
     """ 
-    <s>[INST] You are a technical assistant good at searching docuemnts. If you do not have an answer from the provided information say so. [/INST] </s>
+    <s>[INST] You are a technical assistant good at searching documents. If you do not have an answer from the provided information say so. [/INST] </s>
     [INST] {input}
            Context: {context}
            Answer:
@@ -37,30 +37,25 @@ raw_prompt = PromptTemplate.from_template(
 """
 )
 
+class Query(BaseModel):
+    query: str
 
-@app.route("/ai", methods=["POST"])
-def aiPost():
+@app.post("/ai")
+async def ai_post(query: Query):
     print("Post /ai called")
-    json_content = request.json
-    query = json_content.get("query")
+    print(f"query: {query.query}")
 
-    print(f"query: {query}")
-
-    response = cached_llm.invoke(query)
+    response = cached_llm.invoke(query.query)
 
     print(response)
 
     response_answer = {"answer": response}
     return response_answer
 
-
-@app.route("/ask_pdf", methods=["POST"])
-def askPDFPost():
+@app.post("/ask_pdf")
+async def ask_pdf_post(query: Query):
     print("Post /ask_pdf called")
-    json_content = request.json
-    query = json_content.get("query")
-
-    print(f"query: {query}")
+    print(f"query: {query.query}")
 
     print("Loading vector store")
     vector_store = Chroma(persist_directory=folder_path, embedding_function=embedding)
@@ -80,7 +75,7 @@ def askPDFPost():
             ("human", "{input}"),
             (
                 "human",
-                "Given the above conversation, generation a search query to lookup in order to get information relevant to the conversation",
+                "Given the above conversation, generate a search query to lookup in order to get information relevant to the conversation",
             ),
         ]
     )
@@ -90,18 +85,15 @@ def askPDFPost():
     )
 
     document_chain = create_stuff_documents_chain(cached_llm, raw_prompt)
-    # chain = create_retrieval_chain(retriever, document_chain)
 
     retrieval_chain = create_retrieval_chain(
-        # retriever,
         history_aware_retriever,
         document_chain,
     )
 
-    # result = chain.invoke({"input": query})
-    result = retrieval_chain.invoke({"input": query})
+    result = retrieval_chain.invoke({"input": query.query, "chat_history": chat_history})
     print(result["answer"])
-    chat_history.append(HumanMessage(content=query))
+    chat_history.append(HumanMessage(content=query.query))
     chat_history.append(AIMessage(content=result["answer"]))
 
     sources = []
@@ -113,13 +105,15 @@ def askPDFPost():
     response_answer = {"answer": result["answer"], "sources": sources}
     return response_answer
 
-
-@app.route("/pdf", methods=["POST"])
-def pdfPost():
-    file = request.files["file"]
+@app.post("/pdf")
+async def pdf_post(file: UploadFile = File(...)):
     file_name = file.filename
-    save_file = "pdf/" + file_name
-    file.save(save_file)
+    save_file = f"pdf/{file_name}"
+    
+    with open(save_file, "wb") as buffer:
+        content = await file.read()
+        buffer.write(content)
+    
     print(f"filename: {file_name}")
 
     loader = PDFPlumberLoader(save_file)
@@ -143,10 +137,5 @@ def pdfPost():
     }
     return response
 
-
-def start_app():
-    app.run(host="0.0.0.0", port=8080, debug=True)
-
-
 if __name__ == "__main__":
-    start_app()
+    uvicorn.run(app, host="0.0.0.0", port=8000)

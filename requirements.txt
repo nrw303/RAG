@@ -20,9 +20,6 @@ cryptography==42.0.5
 dataclasses-json==0.6.4
 Deprecated==1.2.14
 fastapi==0.110.2
-fastembed==0.2.6
-filelock==3.13.4
-Flask==3.0.3
 flatbuffers==24.3.25
 frozenlist==1.4.1
 fsspec==2024.3.1
